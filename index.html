@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>PDF → Quiz & Test-Day Search</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0b0e11">
+  <style>
+    :root { --bg:#0b0e11; --card:#12161c; --muted:#8ea0b3; --text:#e8eef5; --accent:#7cd1ff; --accent2:#a0ffa0; --danger:#ff6b6b; }
+    html, body { height:100%; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; background:var(--bg); color:var(--text); }
+    header { padding:16px 20px; display:flex; gap:16px; align-items:center; border-bottom:1px solid #1a2230; position:sticky; top:0; background:linear-gradient(180deg, rgba(11,14,17,.98), rgba(11,14,17,.95)); z-index:5;}
+    header h1 { margin:0; font-size:18px; letter-spacing:.3px; }
+    header small { color:var(--muted); }
+    .container { max-width:1200px; margin:0 auto; padding: 16px; }
+    .row { display:grid; grid-template-columns: 1fr; gap:16px; }
+    .card { background:var(--card); border:1px solid #1a2230; border-radius:14px; padding:16px; }
+    .card h2 { margin-top:0; font-size:18px; }
+    .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+    input[type="file"] { color:var(--text); }
+    button, .btn {
+      background:#16202d; color:var(--text); border:1px solid #263347; padding:10px 14px; border-radius:12px; cursor:pointer;
+    }
+    button:hover { background:#1b2736; }
+    .primary { background:#0e3048; border-color:#1c4f72; color:#d7f1ff; }
+    .primary:hover { background:#10425f; }
+    .success { background:#104820; border-color:#1a6c31; color:#dcffe0; }
+    .danger { background:#4a0f14; border-color:#7a1f28; color:#ffd1d1; }
+    .muted { color:var(--muted); }
+    .tabs { display:flex; gap:8px; }
+    .tab { padding:10px 12px; border-bottom:2px solid transparent; cursor:pointer; color:var(--muted); }
+    .tab.active { color:var(--text); border-bottom-color:var(--accent); }
+    .hidden { display:none; }
+    .grid-2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    .grid-3 { display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; }
+    @media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+    .pill { font-size:12px; border:1px solid #2a3a4e; padding:4px 8px; border-radius:999px; background:#111825; color:#a8beda; }
+    .kbd { border:1px solid #394a60; padding:2px 6px; border-bottom-width:3px; border-radius:6px; background:#0d1420; color:#c7d7ea; font-weight:600; font-size:12px; }
+    .list { display:flex; flex-direction:column; gap:8px; }
+    .result { border:1px dashed #2a3b50; border-radius:12px; padding:10px; background:#0c121b; }
+    .result h4 { margin:0 0 6px 0; font-size:15px; }
+    .result .excerpt { color:#cfe3ff; }
+    .stack { display:flex; flex-direction:column; gap:8px; }
+    .rowline { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .hl { background: rgba(255,255,0,.15); padding:0 2px; border-radius:3px; }
+    .badge { display:inline-block; padding:2px 6px; border-radius:6px; border:1px solid #2a3b50; font-size:12px; color:#bcd; }
+    .hr { height:1px; background:#1a2230; margin:10px 0; }
+    .question { font-size:16px; line-height:1.4; }
+    .options { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+    .opt { padding:10px; border:1px solid #273246; border-radius:10px; cursor:pointer; background:#0c121b; }
+    .opt input { margin-right:8px; }
+    .opt.correct { border-color:#2f7d3c; background:#0f1a12; }
+    .opt.wrong { border-color:#7d2f2f; background:#180f10; }
+    .explain { margin-top:8px; color:#bfe; font-size:14px; }
+    .progress { height:8px; border-radius:999px; background:#0e1620; overflow:hidden; border:1px solid #263347; }
+    .progress > div { height:100%; background:linear-gradient(90deg, #7cd1ff, #a0ffa0); width:0%; }
+    .footer { color:#8ea0b3; font-size:12px; padding:10px 0 20px; }
+    .toast { position: fixed; right: 16px; bottom: 16px; background: #0c121b; border:1px solid #2a3b50; padding: 12px 14px; border-radius: 12px; display:none; }
+  </style>
+  <!-- CDN libs (cached by service worker after first visit) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lunr.js/2.3.9/lunr.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+  <header>
+    <h1>PDF → Quiz & Test-Day Search</h1>
+    <small>Upload your PDF; everything runs in-browser. Hosted online for anytime access.</small>
+  </header>
+
+  <div class="container">
+    <div class="card">
+      <div class="controls">
+        <input type="file" id="pdfFile" accept="application/pdf"/>
+        <button class="primary" id="loadBtn">Load PDF</button>
+        <span id="meta" class="pill">No PDF loaded</span>
+        <span class="pill">Hotkeys: <span class="kbd">s</span> search · <span class="kbd">n</span> next · <span class="kbd">r</span> review</span>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="quizTab">Quiz</div>
+      <div class="tab" data-tab="searchTab">Search</div>
+      <div class="tab" data-tab="adminTab">Admin</div>
+    </div>
+
+    <section id="quizTab" class="card">
+      <h2>Quiz Generator</h2>
+      <div class="grid-2">
+        <div class="stack">
+          <div class="rowline">
+            <label>Questions per run:</label>
+            <select id="qCount">
+              <option>10</option><option>20</option><option selected>30</option><option>50</option><option>Full Sweep</option>
+            </select>
+            <label><input type="checkbox" id="simExam"/> Simulated exam (hide explanations until end)</label>
+          </div>
+          <div class="rowline">
+            <button class="success" id="genQuizBtn">Generate Quiz (section-ordered)</button>
+            <button id="reviewBtn">Review Last Attempt</button>
+          </div>
+          <div class="progress"><div id="progBar"></div></div>
+          <div id="quizPane" class="stack"></div>
+        </div>
+        <div class="stack">
+          <div class="pill">Section coverage</div>
+          <div id="coverage" class="list"></div>
+          <div class="hr"></div>
+          <div class="pill">Current question source</div>
+          <div id="sourceBox" class="muted"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="searchTab" class="card hidden">
+      <h2>Test-Day Answer Lookup</h2>
+      <div class="rowline">
+        <input id="searchBox" placeholder="Type keywords or a question… (e.g., moonlighting 80-hour, in-house call frequency)" style="flex:1; padding:10px; border-radius:10px; border:1px solid #273246; background:#0c121b; color:#e8eef5;">
+        <button id="searchBtn" class="primary">Search</button>
+        <button id="mustFilter" class="btn">Filter: must</button>
+        <button id="shouldFilter" class="btn">Filter: should</button>
+        <button id="clearFilter" class="btn">Clear filters</button>
+      </div>
+      <div class="hr"></div>
+      <div id="facetBar" class="rowline"></div>
+      <div id="results" class="list"></div>
+    </section>
+
+    <section id="adminTab" class="card hidden">
+      <h2>Admin & Parser</h2>
+      <p class="muted">After loading a PDF, click Scan / Rebuild to parse sections & build quiz items and search index. Export/import snapshots as needed.</p>
+      <div class="rowline">
+        <button id="scanDoc" class="primary">Scan / Rebuild</button>
+        <button id="exportJson">Export Artifacts (sections + records + items)</button>
+        <input type="file" id="importJson" accept="application/json"/>
+      </div>
+      <div class="grid-2">
+        <div>
+          <h3>Detected Sections</h3>
+          <div id="sectionsView" class="list"></div>
+        </div>
+        <div>
+          <h3>Modal Sentences</h3>
+          <div id="modalsView" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">Hosted as a static site. First visit caches the app & libs for reliability via Service Worker.</div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+/** Service worker registration **/
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW reg failed', e));
+  });
+}
+
+/** State **/
+let PDF_BYTES = null;
+let DOC = null; // pdfjs doc
+let TEXT_PAGES = []; // [{pageNumber, text}]
+let SECTIONS = []; // [{id,title,startPage,endPage,startIdx,endIdx}]
+let RECORDS = []; // search units [{id, sectionId, title, body, page, modality: {must, should, could}}]
+let ITEMS = []; // quiz items from RECORDS
+let LUNR_IDX = null;
+let FILTERS = {must:false, should:false};
+let LAST_ATTEMPT = null;
+
+/** UI helpers **/
+function toast(msg, ms=2200){ const t = document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none', ms); }
+function $(sel){ return document.querySelector(sel); }
+function $all(sel){ return Array.from(document.querySelectorAll(sel)); }
+
+/** Tabs **/
+$all('.tab').forEach(el=>{
+  el.addEventListener('click', ()=>{
+    $all('.tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    ['quizTab','searchTab','adminTab'].forEach(id=>document.getElementById(id).classList.add('hidden'));
+    document.getElementById(el.dataset.tab).classList.remove('hidden');
+  });
+});
+
+/** Load PDF **/
+$('#loadBtn').addEventListener('click', async ()=>{
+  const f = $('#pdfFile').files[0];
+  if(!f){ toast('Choose a PDF first.'); return; }
+  PDF_BYTES = await f.arrayBuffer();
+  await openPdf(PDF_BYTES);
+  $('#meta').textContent = `Loaded: ${f.name} (${Math.round(f.size/1024)} KB)`;
+  toast('PDF loaded. Click “Scan / Rebuild” in Admin to parse.');
+});
+
+async function openPdf(bytes){
+  const loadingTask = pdfjsLib.getDocument({ data: bytes });
+  DOC = await loadingTask.promise;
+}
+
+/** Parse with PDF.js → TEXT_PAGES **/
+async function extractAllText(){
+  if(!DOC){ toast('Load a PDF first.'); return; }
+  TEXT_PAGES = [];
+  for(let p=1; p<=DOC.numPages; p++){
+    const page = await DOC.getPage(p);
+    const content = await page.getTextContent();
+    const strings = content.items.map(i => i.str);
+    const text = strings.join('\\n');
+    TEXT_PAGES.push({pageNumber:p, text});
+  }
+  return TEXT_PAGES;
+}
+
+/** Section detection **/
+function detectSections(){
+  const all = TEXT_PAGES.map(pg => `\\n<<<PAGE ${pg.pageNumber}>>>\\n${pg.text}`).join('\\n');
+  const headingRegex = /(^|\\n)(Section\\s+\\d+\\s*[:.\\-–]\\s*[^\\n]+|SECTION\\s+\\d+\\s*[:.\\-–]\\s*[^\\n]+)/g;
+  let match, idxs = [];
+  while((match = headingRegex.exec(all)) !== null){
+    idxs.push({idx: match.index + (match[1] ? match[1].length : 0), heading: match[2].trim()});
+  }
+  if(idxs.length === 0){
+    const secLikeRegex = /(^|\\n)(\\d+\\.\\d+\\s+[^\\n]+)/g;
+    while((match = secLikeRegex.exec(all)) !== null){
+      idxs.push({idx: match.index + (match[1] ? match[1].length : 0), heading: match[2].trim()});
+    }
+  }
+  idxs.sort((a,b)=>a.idx-b.idx);
+  const sections = [];
+  for(let i=0;i<idxs.length;i++){
+    const start = idxs[i].idx;
+    const end = i+1<idxs.length ? idxs[i+1].idx : all.length;
+    const content = all.slice(start, end);
+    const title = idxs[i].heading.replace(/\\s+/g,' ').trim();
+    const pages = [...content.matchAll(/<<<PAGE\\s+(\\d+)>>>/g)].map(m=>parseInt(m[1],10));
+    const startPage = pages.length ? Math.min(...pages) : 1;
+    const endPage = pages.length ? Math.max(...pages) : startPage;
+    sections.push({ id: 'sec'+(i+1), title, startPage, endPage, content });
+  }
+  SECTIONS = sections.length ? sections : [{id:'sec1', title:'Document', startPage:1, endPage:TEXT_PAGES.at(-1)?.pageNumber||1, content:TEXT_PAGES.map(p=>p.text).join('\\n') }];
+}
+
+/** Record extraction **/
+function buildRecords(){
+  RECORDS = [];
+  const parasFrom = (s) => s.content.split(/\\n{2,}/).map(x=>x.trim()).filter(Boolean);
+  let rid = 1;
+  for(const sec of SECTIONS){
+    const paras = parasFrom(sec);
+    for(const para of paras){
+      const pageHit = /\\<\\<\\<PAGE\\s+(\\d+)\\>\\>\\>/.exec(para);
+      const page = pageHit ? parseInt(pageHit[1],10) : sec.startPage;
+      const body = para.replace(/\\<\\<\\<PAGE\\s+\\d+\\>\\>\\>/g,' ').replace(/\\s+/g,' ').trim();
+      const modality = {
+        must: /\\bmust\\b/i.test(body),
+        should: /\\bshould\\b/i.test(body),
+        could: /\\bcould\\b/i.test(body),
+        may: /\\bmay\\b/i.test(body),
+        shall: /\\bshall\\b/i.test(body)
+      };
+      const title = body.split(/\\s+/).slice(0,10).join(' ') + (body.split(/\\s+/).length>10?'…':'');
+      RECORDS.push({ id:'r'+(rid++), sectionId:sec.id, sectionTitle:sec.title, title, body, page, modality });
+    }
+  }
+}
+
+/** Build Lunr index **/
+function buildIndex(){
+  LUNR_IDX = lunr(function(){
+    this.ref('id');
+    this.field('body');
+    this.field('title', {boost: 5});
+    this.field('sectionTitle', {boost: 2});
+    RECORDS.forEach(rec => this.add(rec), this);
+  });
+}
+
+/** Generate quiz items **/
+function genItems(){
+  ITEMS = [];
+  const sentences = (text)=> text.split(/(?<=[\\.?\\!;])\\s+/).map(s=>s.trim()).filter(s=>s.length>20);
+  let qid=1;
+  for(const sec of SECTIONS){
+    const sens = sentences(sec.content);
+    for(const s of sens){
+      const hasModal = /\\b(must|should|could|may|shall)\\b/i.test(s);
+      if(!hasModal) continue;
+      const pageHit = /\\<\\<\\<PAGE\\s+(\\d+)\\>\\>\\>/.exec(s);
+      const page = pageHit ? parseInt(pageHit[1],10) : sec.startPage;
+      const stem = s.replace(/\\<\\<\\<PAGE\\s+\\d+\\>\\>\\>/g,' ').trim();
+      const opts = ['True','False'];
+      const answerIdx = 0;
+      ITEMS.push({ id:'q'+(qid++), type:'tf', sectionId:sec.id, sectionTitle:sec.title, stem, options:opts, answerIdx, page, explain: stem });
+    }
+    for(const s of sens){
+      if(!/\\d/.test(s)) continue;
+      const pageHit = /\\<\\<\\<PAGE\\s+(\\d+)\\>\\>\\>/.exec(s);
+      const page = pageHit ? parseInt(pageHit[1],10) : sec.startPage;
+      const stem = s.replace(/\\<\\<\\<PAGE\\s+\\d+\\>\\>\\>/g,' ').trim();
+      const numMatch = s.match(/(\\b(?:\\d+|\\d+\\-\\d+|\\d+%|every\\s+\\w+\\s+\\w+|[A-Za-z\\-]*hour)\\b[^.;,)]*)/i);
+      const correct = numMatch ? numMatch[0].trim() : 'The exact requirement as stated';
+      function tweakNumber(txt, delta){
+        return txt.replace(/(\\d+)/, (m)=> String(Math.max(1, parseInt(m,10)+delta)));
+      }
+      const d1 = tweakNumber(correct, +1);
+      const d2 = tweakNumber(correct, -1);
+      const d3 = correct.replace(/\\b(must|should|may)\\b/i, (m)=> m.toLowerCase()==='must'?'may':(m.toLowerCase()==='should'?'must':'should'));
+      const options = [correct, d1, d2, d3].filter((v,i,a)=>a.indexOf(v)===i).slice(0,4);
+      const answerIdx = 0;
+      ITEMS.push({ id:'q'+(qid++), type:'mcq', sectionId:sec.id, sectionTitle:sec.title, stem, options, answerIdx, page, explain: stem });
+    }
+  }
+}
+
+/** Coverage view **/
+function updateCoverage(){
+  const bySec = new Map();
+  for(const it of ITEMS){
+    bySec.set(it.sectionId, 1 + (bySec.get(it.sectionId)||0));
+  }
+  const el = document.getElementById('coverage'); el.innerHTML='';
+  for(const sec of SECTIONS){
+    const n = bySec.get(sec.id)||0;
+    const div = document.createElement('div');
+    div.className='rowline';
+    div.innerHTML = `<span class="badge">${sec.title}</span> <span class="muted">pages ${sec.startPage}–${sec.endPage}</span> <span class="pill">${n} items</span>`;
+    el.appendChild(div);
+  }
+}
+
+/** Quiz runner **/
+let RUN = { cursor:0, order:[], answers:[], reveal:false };
+
+function startQuiz(){
+  const sel = document.getElementById('qCount').value;
+  let chosen = ITEMS.slice();
+  if(sel!=='Full Sweep'){
+    const n = parseInt(sel,10);
+    chosen = chosen.slice(0, Math.min(n, chosen.length));
+  }
+  RUN = { cursor:0, order: chosen, answers: Array(chosen.length).fill(null), reveal: !document.getElementById('simExam').checked };
+  renderQuestion();
+  updateProgress();
+}
+
+function renderQuestion(){
+  const pane = document.getElementById('quizPane');
+  pane.innerHTML='';
+  if(RUN.order.length===0){ pane.textContent='No items generated yet.'; return; }
+  const i = RUN.cursor;
+  const item = RUN.order[i];
+  const box = document.createElement('div');
+  box.className='card';
+  box.innerHTML = `
+    <div class="rowline"><span class="badge">${item.sectionTitle}</span><span class="pill">p.${item.page}</span></div>
+    <div class="question">${escapeHtml(item.stem)}</div>
+    <div class="options">${item.options.map((opt,idx)=>`
+      <label class="opt" data-idx="${idx}"><input type="radio" name="ans" ${RUN.answers[i]===idx?'checked':''}/> ${escapeHtml(opt)}</label>
+    `).join('')}</div>
+    <div class="rowline" style="margin-top:10px;">
+      <button id="prevBtn">&larr; Prev</button>
+      <button id="nextBtn">Next &rarr;</button>
+      <button id="submitBtn" class="primary">Finish</button>
+    </div>
+    <div class="explain ${RUN.reveal?'':'hidden'}"><strong>Explanation:</strong> ${escapeHtml(item.explain)}</div>
+  `;
+  pane.appendChild(box);
+  document.getElementById('sourceBox').textContent = `${item.sectionTitle}, page ${item.page}`;
+  document.querySelectorAll('.opt').forEach(el=>el.addEventListener('click', ()=>{
+    const idx = parseInt(el.dataset.idx,10);
+    RUN.answers[i] = idx;
+    highlightAnswers();
+  }));
+  document.getElementById('prevBtn').addEventListener('click', ()=>{ if(RUN.cursor>0){ RUN.cursor--; renderQuestion(); updateProgress(); } });
+  document.getElementById('nextBtn').addEventListener('click', ()=>{ if(RUN.cursor<RUN.order.length-1){ RUN.cursor++; renderQuestion(); updateProgress(); } });
+  document.getElementById('submitBtn').addEventListener('click', ()=> finishQuiz());
+  highlightAnswers();
+}
+
+function highlightAnswers(){
+  const i = RUN.cursor;
+  const item = RUN.order[i];
+  document.querySelectorAll('.opt').forEach((el,idx)=>{
+    el.classList.remove('correct','wrong');
+    if(RUN.reveal && RUN.answers[i]!==null){
+      if(idx===item.answerIdx) el.classList.add('correct');
+      else if(idx===RUN.answers[i]) el.classList.add('wrong');
+    }
+  });
+}
+
+function updateProgress(){
+  const pct = RUN.order.length ? Math.round(100*(RUN.cursor+1)/RUN.order.length) : 0;
+  document.getElementById('progBar').style.width = pct+'%';
+}
+
+function finishQuiz(){
+  const total = RUN.order.length;
+  let correct = 0;
+  RUN.order.forEach((it, i)=>{ if(RUN.answers[i]===it.answerIdx) correct++; });
+  LAST_ATTEMPT = {
+    total, correct,
+    items: RUN.order.map((it,i)=>({ stem:it.stem, options:it.options, chosen:RUN.answers[i], answerIdx:it.answerIdx, sectionTitle:it.sectionTitle, page:it.page, explain:it.explain }))
+  };
+  toast(`Score: ${correct}/${total}`);
+  renderReview();
+}
+
+function renderReview(){
+  document.getElementById('quizPane').innerHTML = LAST_ATTEMPT.items.map((it, i)=>{
+    const choice = it.chosen;
+    const res = (choice===it.answerIdx)?'✅':'❌';
+    const opts = it.options.map((o,idx)=>{
+      const mark = idx===it.answerIdx?'(correct)':(idx===choice?'(yours)':'');
+      return `<div class="opt ${idx===it.answerIdx?'correct':(idx===choice?'wrong':'')}">${escapeHtml(o)} ${mark}</div>`;
+    }).join('');
+    return `
+      <div class="card">
+        <div class="rowline"><span class="badge">${it.sectionTitle}</span><span class="pill">p.${it.page}</span></div>
+        <div class="question">${res} ${escapeHtml(it.stem)}</div>
+        <div class="options">${opts}</div>
+        <div class="explain"><strong>Explanation (excerpt):</strong> ${escapeHtml(it.explain)}</div>
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('genQuizBtn').addEventListener('click', startQuiz);
+document.getElementById('reviewBtn').addEventListener('click', ()=>{
+  if(!LAST_ATTEMPT){ toast('No attempt yet.'); return; }
+  renderReview();
+});
+
+/** Admin */
+document.getElementById('scanDoc').addEventListener('click', async ()=>{
+  if(!DOC){ toast('Load a PDF first.'); return; }
+  document.getElementById('sectionsView').textContent='Scanning PDF pages…';
+  await extractAllText();
+  detectSections();
+  buildRecords();
+  buildIndex();
+  genItems();
+  updateCoverage();
+  renderAdmin();
+  toast(`Parsed ${TEXT_PAGES.length} pages → ${SECTIONS.length} sections → ${RECORDS.length} records → ${ITEMS.length} items.`);
+});
+
+document.getElementById('exportJson').addEventListener('click', ()=>{
+  const out = JSON.stringify({ sections:SECTIONS, records:RECORDS, items:ITEMS }, null, 2);
+  downloadText(out, 'pdf_quiz_search_artifacts.json', 'application/json');
+});
+
+document.getElementById('importJson').addEventListener('change', async (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  const txt = await f.text();
+  const obj = JSON.parse(txt);
+  SECTIONS = obj.sections||[]; RECORDS = obj.records||[]; ITEMS = obj.items||[];
+  buildIndex();
+  updateCoverage();
+  renderAdmin();
+  toast('Imported artifacts.');
+});
+
+function renderAdmin(){
+  const secV = document.getElementById('sectionsView'); secV.innerHTML='';
+  SECTIONS.forEach((s,i)=>{
+    const div = document.createElement('div');
+    div.className='result';
+    div.innerHTML = `<h4>${i+1}. ${escapeHtml(s.title)}</h4>
+      <div class="muted">Pages ${s.startPage}–${s.endPage}</div>
+      <div class="excerpt">${escapeHtml(s.content.slice(0,200))}…</div>`;
+    secV.appendChild(div);
+  });
+  const modV = document.getElementById('modalsView'); modV.innerHTML='';
+  const modalParas = RECORDS.filter(r=>r.modality.must||r.modality.should||r.modality.could||r.modality.may||r.modality.shall).slice(0,200);
+  modalParas.forEach(r=>{
+    const div = document.createElement('div');
+    const tags = Object.entries(r.modality).filter(([k,v])=>v).map(([k])=>`<span class="pill">${k}</span>`).join(' ');
+    div.className='result';
+    div.innerHTML = `<h4>${escapeHtml(r.sectionTitle)} · p.${r.page}</h4>
+      <div class="rowline">${tags}</div>
+      <div class="excerpt">${escapeHtml(r.body.slice(0,300))}…</div>`;
+    modV.appendChild(div);
+  });
+}
+
+/** Search **/
+document.getElementById('searchBtn').addEventListener('click', doSearch);
+document.getElementById('searchBox').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doSearch(); });
+document.getElementById('mustFilter').addEventListener('click', ()=>{ FILTERS.must = !FILTERS.must; toast(`must:${FILTERS.must?'on':'off'}`); doSearch(); });
+document.getElementById('shouldFilter').addEventListener('click', ()=>{ FILTERS.should = !FILTERS.should; toast(`should:${FILTERS.should?'on':'off'}`); doSearch(); });
+document.getElementById('clearFilter').addEventListener('click', ()=>{ FILTERS = {must:false, should:false}; doSearch(); });
+
+function doSearch(){
+  const q = document.getElementById('searchBox').value.trim();
+  if(!q){ document.getElementById('results').innerHTML=''; return; }
+  if(!LUNR_IDX){ toast('Scan the document first (Admin tab).'); return; }
+  let hits = LUNR_IDX.search(q);
+  let recs = hits.map(h=> RECORDS.find(r=>r.id===h.ref)).filter(Boolean);
+  if(FILTERS.must) recs = recs.filter(r=>r.modality.must);
+  if(FILTERS.should) recs = recs.filter(r=>r.modality.should);
+  const order = SECTIONS.map(s=>s.id);
+  recs.sort((a,b)=> order.indexOf(a.sectionId)-order.indexOf(b.sectionId) || a.page-b.page);
+  const out = [];
+  let curr = null;
+  for(const r of recs.slice(0,200)){
+    if(curr!==r.sectionId){
+      const sec = SECTIONS.find(s=>s.id===r.sectionId);
+      out.push(`<h3 style="margin:18px 0 8px">${escapeHtml(sec.title)} <span class="muted">(p.${sec.startPage}–${sec.endPage})</span></h3>`);
+      curr = r.sectionId;
+    }
+    out.push(renderResult(r, q));
+  }
+  document.getElementById('results').innerHTML = out.join('') || '<div class="muted">No hits.</div>';
+}
+
+function renderResult(r, q){
+  const hl = (txt)=> txt.replace(new RegExp('('+escapeRegExp(q)+')','ig'), '<span class="hl">$1</span>');
+  return `<div class="result">
+    <h4>${escapeHtml(r.title)}</h4>
+    <div class="rowline"><span class="badge">${escapeHtml(r.sectionTitle)}</span><span class="pill">p.${r.page}</span>
+      ${Object.entries(r.modality).filter(([k,v])=>v).map(([k])=>`<span class="pill">${k}</span>`).join(' ')}
+    </div>
+    <div class="excerpt">${hl(escapeHtml(r.body.slice(0,400)))}…</div>
+  </div>`;
+}
+
+/** Utils **/
+function downloadText(text, name, mime){
+  const blob = new Blob([text], {type: mime||'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function escapeHtml(s){ return s.replace(/[&<>\"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;' }[m])); }
+function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/** Hotkeys **/
+document.addEventListener('keydown', (e)=>{
+  if(e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA') return;
+  if(e.key==='s'){ document.getElementById('searchBox').focus(); e.preventDefault(); }
+  if(e.key==='n'){ if(RUN && RUN.cursor<RUN.order.length-1){ RUN.cursor++; renderQuestion(); updateProgress(); } }
+  if(e.key==='r'){ const reviewTab = document.querySelector('.tab[data-tab="quizTab"]'); reviewTab.click(); document.getElementById('reviewBtn').click(); }
+});
+</script>
+</body>
+</html>
